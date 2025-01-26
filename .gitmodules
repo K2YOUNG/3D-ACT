@@ -1,0 +1,3 @@
+[submodule "3detr"]
+	path = 3detr
+	url = https://github.com/K2YOUNG/3detr_mine.git

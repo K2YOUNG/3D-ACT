@@ -2,3 +2,9 @@
 .DS_store
 /aloha.egg-info/
 /aloha_scripts/.idea/
+
+data/
+nohup/
+output/
+output*/
+CMakeLists.txt

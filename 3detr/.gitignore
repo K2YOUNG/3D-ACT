@@ -1,6 +1,8 @@
 *.swp
 **/__pycache__/**
-third_party/*
+third_party/pointnet2/build
+third_party/pointnet2/dist
+third_party/pointnet2/pointnet2.egg-info
 
 # generated files
 utils/box_intersection.c

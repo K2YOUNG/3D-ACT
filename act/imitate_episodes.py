@@ -8,9 +8,12 @@ from copy import deepcopy
 from tqdm import tqdm
 from einops import rearrange
 
+import yaml
+import time
+
 from constants import DT
 from constants import PUPPET_GRIPPER_JOINT_OPEN
-from utils import load_data # data functions
+from utils import load_data, generate_points # data functions
 from utils import sample_box_pose, sample_insertion_pose # robot functions
 from utils import compute_dict_mean, set_seed, detach_dict # helper functions
 from policy import ACTPolicy, CNNMLPPolicy
@@ -21,49 +24,125 @@ from sim_env import BOX_POSE
 import IPython
 e = IPython.embed
 
+def set_ur5(num_cameras, state_dim, reset_joints):
+    import rospy
+    from gellosoftware_BI.gello.env import RobotEnv
+    from gellosoftware_BI.gello.zmq_core.robot_node import ZMQClientRobot
+    from gellosoftware_BI.gello.cameras.realsense_camera import LogitechCamera, RealSenseCamera, RealSenseCameraRos, get_device_ids
+    if num_cameras >= 2:
+        if state_dim == 14:
+            ## 먼저 realsense수 체크
+            ids = get_device_ids()
+            camera_clients = {}
+            for id in ids:
+                if id == '033422070567': #left camera
+                    camera_clients["wrist_left"] = RealSenseCamera(device_id=id)
+                elif id == '021222071327':
+                    camera_clients["wrist_right"] = RealSenseCamera(device_id=id)
+                        
+            camera_clients["base"] = LogitechCamera(device_id='/dev/frontcam')
+        else:
+            print("DUAL CAMERA!!!")
+            camera_clients = {
+                # you can optionally add camera nodes here for imitation learning purposes
+                # "wrist": RealSenseCamera(),
+                "base": LogitechCamera(device_id='/dev/frontcam'),
+                    
+            }
+            arti_check = True
+            camera_clients['arti'] = RealSenseCameraRos(topic='camera')
+        print("FINISH")
+    else:
+        # Going to use more than two cameras
+        # Skipping to implement the single-camera situation
+        # TODO : Implement single-camera situation
+        pass
+
+    robot_client = ZMQClientRobot(port=6001, host="127.0.0.1")
+    env = RobotEnv(robot_client, control_rate_hz=50, camera_dict=camera_clients)
+
+    if state_dim == 14:
+        pass
+        # dynamixel control box port map (to distinguish left and right gello)
+            
+        # 1119 세팅에 맞게 변경
+        # right = "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT94EKG0-if00-port0"
+        # left = "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT9BTGRS-if00-port0"
+        # left_agent = GelloAgent(port=left)
+        # right_agent = GelloAgent(port=right)
+        # agent = BimanualAgent(left_agent, right_agent)
+        # print("gellos,")
+
+        ## 1119 세팅!! TODO 바꿔야함
+        # reset_joints_left = np.deg2rad([149, -58, -134, -77, 87, -45, 0])
+        # reset_joints_right = np.deg2rad([-143, -112, 127, -104, -93, 45, 0])
+        # reset_joints = np.concatenate([reset_joints_left, reset_joints_right])
+        # curr_joints = env.get_obs()["joint_positions"]
+        # max_delta = (np.abs(curr_joints - reset_joints)).max()
+        # steps = min(int(max_delta / 0.01), 100)
+
+        # for jnt in np.linspace(curr_joints, reset_joints, steps):
+        #     env.step(jnt)
+    else:
+        it = 1 # right robot
+        reset_joints = reset_joints
+                
+        # agent = GelloAgent(port=gello_port, start_joints=args.start_joints)
+        curr_joints = env.get_obs()["joint_positions"]
+        if reset_joints.shape == curr_joints.shape:
+            max_delta = (np.abs(curr_joints - reset_joints)).max()
+            steps = min(int(max_delta / 0.01), 100)
+
+            for jnt in np.linspace(curr_joints, reset_joints, steps):
+                env.step(jnt)
+                time.sleep(0.001)
+        
+    # going to start position
+    print("Going to start position")
+    scan_cam = camera_clients['arti']
+
+    time.sleep(1)
+
+    return env, scan_cam
+
 def main(args):
+    with open(args["config_path"]) as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+
     set_seed(1)
     # command line parameters
-    is_eval = args['eval']
-    ckpt_dir = args['ckpt_dir']
-    policy_class = args['policy_class']
-    onscreen_render = args['onscreen_render']
-    task_name = args['task_name']
-    batch_size_train = args['batch_size']
-    batch_size_val = args['batch_size']
-    num_epochs = args['num_epochs']
-    use_color = args['use_color']
-    use_pointcloud = args['use_pointcloud']
-    num_points = args['num_points']
+    is_eval = config['evaluation']['is_eval']
+    ckpt_dir = config['model']['ckpt_dir']
+    policy_class = config['model']['policy_class']
+    # onscreen_render = args['onscreen_render']
+    task_name = config['data']['task_name']
+    batch_size_train = config['train']['batch_size']
+    batch_size_val = config['train']['batch_size']
+    num_epochs = config['train']['num_epochs']
 
-    is_sim = False
-    # get task parameters
-    # is_sim = task_name[:4] == 'sim_'
-    # if is_sim:
-    #     from constants import SIM_TASK_CONFIGS
-    #     task_config = SIM_TASK_CONFIGS[task_name]
-    # else:
-    #     from aloha_scripts.constants import TASK_CONFIGS
-    #     task_config = TASK_CONFIGS[task_name]
-    dataset_dir = args['dataset_dir']
-    num_episodes = 23
-    episode_len = 300
-    # camera_names = task_config['camera_names']
+    is_sim = config['data']['is_sim']
+    dataset_dir = config['data']['dataset_dir']
+    num_episodes = config['data']['num_episodes']
+    episode_len = config['data']['episode_len']
+    use_color = config['data']['use_color']
+    use_pointcloud = config['data']['use_pointcloud']
+    num_points = config['data']['num_points']
+    num_cameras = config['data']['num_cameras']
+    reset_joints = config['robot']['reset_joints']
 
     # fixed parameters
-    state_dim = 14
-    # lr_backbone = 1e-5
-    lr_backbone = 0
-    backbone = '3DETR'
+    state_dim = config['model']['state_dim']
+    lr_backbone = config['model']['lr_backbone']
+    backbone = config['model']['backbone']
     if policy_class == 'ACT':
-        enc_layers = 4
-        dec_layers = 7
-        nheads = 8
-        policy_config = {'lr': args['lr'],
-                         'num_queries': args['chunk_size'],
-                         'kl_weight': args['kl_weight'],
-                         'hidden_dim': args['hidden_dim'],
-                         'dim_feedforward': args['dim_feedforward'],
+        enc_layers = config['model']['ACT']['enc_layers']
+        dec_layers = config['model']['ACT']['dec_layers']
+        nheads = config['model']['ACT']['nheads']
+        policy_config = {'lr': config['train']['lr'],
+                         'num_queries': config['model']['ACT']['chunk_size'],
+                         'kl_weight': config['train']['kl_weight'],
+                         'hidden_dim': config['model']['ACT']['hidden_dim'],
+                         'dim_feedforward': config['model']['ACT']['dim_feedforward'],
                          'lr_backbone': lr_backbone,
                          'backbone': backbone,
                          'enc_layers': enc_layers,
@@ -73,34 +152,42 @@ def main(args):
                          'use_pointcloud': use_pointcloud
                          }
     elif policy_class == 'CNNMLP':
+        raise NotImplementedError("DID not implement CNNMLP - USE ACT")
         policy_config = {'lr': args['lr'], 'lr_backbone': lr_backbone, 'backbone' : backbone, 'num_queries': 1,
                         #  'camera_names': camera_names,
                          }
     else:
-        raise NotImplementedError
+        raise NotImplementedError("USE ACT")
 
     config = {
         'num_epochs': num_epochs,
         'ckpt_dir': ckpt_dir,
         'episode_len': episode_len,
         'state_dim': state_dim,
-        'lr': args['lr'],
+        'lr': config['train']['lr'],
         'policy_class': policy_class,
-        'onscreen_render': onscreen_render,
+        # 'onscreen_render': onscreen_render,
         'policy_config': policy_config,
         'task_name': task_name,
-        'seed': args['seed'],
-        'temporal_agg': args['temporal_agg'],
+        'seed': config['train']['seed'],
+        'temporal_agg': config['evaluation']['temporal_agg'],
         # 'camera_names': camera_names,
         'real_robot': not is_sim
     }
+
+    if not is_sim and is_eval:
+        env, scan_cam = set_ur5(num_cameras, state_dim, reset_joints)
+        config['env'] = env
+    else:
+        # TODO : Implement evaluation code for simulation
+        pass
 
     # ======= EVALUATION
     if is_eval:
         ckpt_names = [f'policy_best.ckpt']
         results = []
         for ckpt_name in ckpt_names:
-            success_rate, avg_return = eval_bc(config, ckpt_name, save_episode=True)
+            success_rate, avg_return = eval_bc(config, ckpt_name, scan_cam, save_episode=True)
             results.append([ckpt_name, success_rate, avg_return])
 
         for ckpt_name, success_rate, avg_return in results:
@@ -148,34 +235,36 @@ def make_optimizer(policy_class, policy):
     return optimizer
 
 
-def get_image(ts, camera_names):
+def get_image(obs):
     curr_images = []
-    for cam_name in camera_names:
-        curr_image = rearrange(ts.observation['images'][cam_name], 'h w c -> c h w')
-        curr_images.append(curr_image)
+    for name in obs.keys():
+        if name.endswith("rgb"):
+            curr_image = rearrange(obs[name], 'h w c -> c h w')
+            curr_images.append(curr_image)
     curr_image = np.stack(curr_images, axis=0)
     curr_image = torch.from_numpy(curr_image / 255.0).float().cuda().unsqueeze(0)
     return curr_image
 
 
-def eval_bc(config, ckpt_name, save_episode=True):
+def eval_bc(config, ckpt_name, scan_cam, save_episode=True):
     set_seed(1000)
     ckpt_dir = config['ckpt_dir']
     state_dim = config['state_dim']
     real_robot = config['real_robot']
     policy_class = config['policy_class']
-    onscreen_render = config['onscreen_render']
+    # onscreen_render = config['onscreen_render']
     policy_config = config['policy_config']
-    camera_names = config['camera_names']
+    # camera_names = config['camera_names']
     max_timesteps = config['episode_len']
     task_name = config['task_name']
     temporal_agg = config['temporal_agg']
-    onscreen_cam = 'angle'
+    # onscreen_cam = 'angle'
+    env = config['env']
 
     # load policy and stats
     ckpt_path = os.path.join(ckpt_dir, ckpt_name)
     policy = make_policy(policy_class, policy_config)
-    loading_status = policy.load_state_dict(torch.load(ckpt_path))
+    loading_status = policy.load_state_dict(torch.load(ckpt_path, weights_only=True))
     print(loading_status)
     policy.cuda()
     policy.eval()
@@ -189,11 +278,13 @@ def eval_bc(config, ckpt_name, save_episode=True):
 
     # load environment
     if real_robot:
-        from aloha_scripts.robot_utils import move_grippers # requires aloha
-        from aloha_scripts.real_env import make_real_env # requires aloha
-        env = make_real_env(init_node=True)
+        # from aloha_scripts.robot_utils import move_grippers # requires aloha
+        # from aloha_scripts.real_env import make_real_env # requires aloha
+        # env = make_real_env(init_node=True)
         env_max_reward = 0
     else:
+        # TODO : Implement evaluation code for simulation
+        raise NotImplementedError("DIDN'T implemented evaluation codes for simulations")
         from sim_env import make_sim_env
         env = make_sim_env(task_name)
         env_max_reward = env.task.max_reward
@@ -216,13 +307,13 @@ def eval_bc(config, ckpt_name, save_episode=True):
         elif 'sim_insertion' in task_name:
             BOX_POSE[0] = np.concatenate(sample_insertion_pose()) # used in sim reset
 
-        ts = env.reset()
+        # ts = env.reset()
 
-        ### onscreen render
-        if onscreen_render:
-            ax = plt.subplot()
-            plt_img = ax.imshow(env._physics.render(height=480, width=640, camera_id=onscreen_cam))
-            plt.ion()
+        # ### onscreen render
+        # if onscreen_render:
+        #     ax = plt.subplot()
+        #     plt_img = ax.imshow(env._physics.render(height=480, width=640, camera_id=onscreen_cam))
+        #     plt.ion()
 
         ### evaluation loop
         if temporal_agg:
@@ -235,28 +326,33 @@ def eval_bc(config, ckpt_name, save_episode=True):
         rewards = []
         with torch.inference_mode():
             for t in range(max_timesteps):
+                tic = time.time()
                 ### update onscreen render and wait for DT
-                if onscreen_render:
-                    image = env._physics.render(height=480, width=640, camera_id=onscreen_cam)
-                    plt_img.set_data(image)
-                    plt.pause(DT)
+                # if onscreen_render:
+                #     image = env._physics.render(height=480, width=640, camera_id=onscreen_cam)
+                #     plt_img.set_data(image)
+                #     plt.pause(DT)
 
                 ### process previous timestep to get qpos and image_list
-                obs = ts.observation
+                obs = env.get_obs()
                 if 'images' in obs:
                     image_list.append(obs['images'])
                 else:
                     image_list.append({'main': obs['image']})
-                qpos_numpy = np.array(obs['qpos'])
+
+                qpos_numpy = np.array(obs['joint_positions'])
                 qpos = pre_process(qpos_numpy)
                 qpos = torch.from_numpy(qpos).float().cuda().unsqueeze(0)
                 qpos_history[:, t] = qpos
-                curr_image = get_image(ts, camera_names)
+                curr_image = get_image(obs)
+
+                rgb, depth = scan_cam.read()
+                points = generate_points(rgb, depth, scan_cam.camera_matrix)
 
                 ### query policy
                 if config['policy_class'] == "ACT":
                     if t % query_frequency == 0:
-                        all_actions = policy(qpos, curr_image)
+                        all_actions = policy(qpos, points)
                     if temporal_agg:
                         all_time_actions[[t], t:t+num_queries] = all_actions
                         actions_for_curr_step = all_time_actions[:, t]
@@ -270,6 +366,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
                     else:
                         raw_action = all_actions[:, t % query_frequency]
                 elif config['policy_class'] == "CNNMLP":
+                    raise NotImplementedError("DID not implement CNNMLP - USE ACT")
                     raw_action = policy(qpos, curr_image)
                 else:
                     raise NotImplementedError
@@ -280,16 +377,17 @@ def eval_bc(config, ckpt_name, save_episode=True):
                 target_qpos = action
 
                 ### step the environment
-                ts = env.step(target_qpos)
+                env.step(target_qpos)
 
                 ### for visualization
                 qpos_list.append(qpos_numpy)
                 target_qpos_list.append(target_qpos)
-                rewards.append(ts.reward)
+                rewards.append(0)
+                print("ELAPSED TIME", time.time() - tic)
 
             plt.close()
         if real_robot:
-            move_grippers([env.puppet_bot_left, env.puppet_bot_right], [PUPPET_GRIPPER_JOINT_OPEN] * 2, move_time=0.5)  # open
+            # move_grippers([env.puppet_bot_left, env.puppet_bot_right], [PUPPET_GRIPPER_JOINT_OPEN] * 2, move_time=0.5)  # open
             pass
 
         rewards = np.array(rewards)
@@ -425,7 +523,7 @@ def plot_history(train_history, validation_history, num_epochs, ckpt_dir, seed):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config_path', default="config", type=str)
+    parser.add_argument('--config_path', default=os.path.join(os.getcwd(), "act", "config/config.yaml"), type=str)
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--onscreen_render', action='store_true')
     parser.add_argument('--ckpt_dir', action='store', type=str, help='ckpt_dir', required=True)

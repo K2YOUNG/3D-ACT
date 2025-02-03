@@ -1,0 +1,46 @@
+# 3D-ACT parameters
+data:
+    is_sim: False
+    task_name: pickandplace_carrot
+    dataset_dir: ./data/collected
+    num_episodes: !!int 23
+    episode_len: !!int 300
+    use_pointcloud: True
+    num_points: !!int 260000
+    use_color: False
+    num_cameras: !!int 2
+
+robot:
+    reset_joints:
+        - -143
+        - -112
+        - 127
+        - -104
+        - -93
+        - 45
+        - 0
+
+model:
+    backbone: 3DETR
+    policy_class: ACT
+    state_dim: !!int 7
+    lr_backbone: !!int 0
+    ckpt_dir: ./output_batch8
+    ACT:
+        enc_layers: !!int 4
+        dec_layers: !!int 7
+        nheads: !!int 8
+        hidden_dim: !!int 256
+        dim_feedforward: !!int 3200
+        chunk_size: !!int 100
+
+train:
+    lr: !!float 1e-5
+    kl_weight: !!int 10
+    num_epochs: !!int 2000
+    batch_size: !!int 8
+    seed: !!int 0
+
+evaluation:
+    is_eval: False
+    temporal_agg: True

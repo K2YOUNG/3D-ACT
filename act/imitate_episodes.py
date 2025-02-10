@@ -47,10 +47,9 @@ def set_ur5(num_cameras, state_dim, reset_joints):
                 # you can optionally add camera nodes here for imitation learning purposes
                 # "wrist": RealSenseCamera(),
                 "base": LogitechCamera(device_id='/dev/frontcam'),
-                    
+                "arti": RealSenseCameraRos(topic='camera')
             }
-            arti_check = True
-            camera_clients['arti'] = RealSenseCameraRos(topic='camera')
+            
         print("FINISH")
     else:
         # Going to use more than two cameras
@@ -62,32 +61,21 @@ def set_ur5(num_cameras, state_dim, reset_joints):
     env = RobotEnv(robot_client, control_rate_hz=50, camera_dict=camera_clients)
 
     if state_dim == 14:
-        pass
         # dynamixel control box port map (to distinguish left and right gello)
-            
-        # 1119 세팅에 맞게 변경
-        # right = "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT94EKG0-if00-port0"
-        # left = "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT9BTGRS-if00-port0"
-        # left_agent = GelloAgent(port=left)
-        # right_agent = GelloAgent(port=right)
-        # agent = BimanualAgent(left_agent, right_agent)
-        # print("gellos,")
 
         ## 1119 세팅!! TODO 바꿔야함
-        # reset_joints_left = np.deg2rad([149, -58, -134, -77, 87, -45, 0])
-        # reset_joints_right = np.deg2rad([-143, -112, 127, -104, -93, 45, 0])
-        # reset_joints = np.concatenate([reset_joints_left, reset_joints_right])
-        # curr_joints = env.get_obs()["joint_positions"]
-        # max_delta = (np.abs(curr_joints - reset_joints)).max()
-        # steps = min(int(max_delta / 0.01), 100)
+        reset_joints_left = np.deg2rad([149, -58, -134, -77, 87, -45, 0])
+        reset_joints_right = np.deg2rad([-143, -112, 127, -104, -93, 45, 0])
+        reset_joints = np.concatenate([reset_joints_left, reset_joints_right])
+        curr_joints = env.get_obs()["joint_positions"]
+        max_delta = (np.abs(curr_joints - reset_joints)).max()
+        steps = min(int(max_delta / 0.01), 100)
 
-        # for jnt in np.linspace(curr_joints, reset_joints, steps):
-        #     env.step(jnt)
+        for jnt in np.linspace(curr_joints, reset_joints, steps):
+            env.step(jnt)
     else:
         it = 1 # right robot
         reset_joints = reset_joints
-                
-        # agent = GelloAgent(port=gello_port, start_joints=args.start_joints)
         curr_joints = env.get_obs()["joint_positions"]
         if reset_joints.shape == curr_joints.shape:
             max_delta = (np.abs(curr_joints - reset_joints)).max()
@@ -344,7 +332,7 @@ def eval_bc(config, ckpt_name, scan_cam, save_episode=True):
                 qpos = pre_process(qpos_numpy)
                 qpos = torch.from_numpy(qpos).float().cuda().unsqueeze(0)
                 qpos_history[:, t] = qpos
-                curr_image = get_image(obs)
+                # curr_image = get_image(obs)
 
                 rgb, depth = scan_cam.read()
                 points = generate_points(rgb, depth, scan_cam.camera_matrix)

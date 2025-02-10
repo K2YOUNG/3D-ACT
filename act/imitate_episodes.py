@@ -1,12 +1,16 @@
 import torch
 import numpy as np
-import os
+import os, sys
 import pickle
 import argparse
 import matplotlib.pyplot as plt
 from copy import deepcopy
 from tqdm import tqdm
 from einops import rearrange
+
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.abspath(os.path.join(CUR_DIR, os.pardir, os.pardir))
+sys.path.append(ROOT_DIR)
 
 import yaml
 import time
@@ -19,7 +23,7 @@ from utils import compute_dict_mean, set_seed, detach_dict # helper functions
 from policy import ACTPolicy, CNNMLPPolicy
 from visualize_episodes import save_videos
 
-from sim_env import BOX_POSE
+# from sim_env import BOX_POSE
 
 import IPython
 e = IPython.embed
@@ -29,6 +33,9 @@ def set_ur5(num_cameras, state_dim, reset_joints):
     from gellosoftware_BI.gello.env import RobotEnv
     from gellosoftware_BI.gello.zmq_core.robot_node import ZMQClientRobot
     from gellosoftware_BI.gello.cameras.realsense_camera import LogitechCamera, RealSenseCamera, RealSenseCameraRos, get_device_ids
+
+    rospy.init_node("arti")
+
     if num_cameras >= 2:
         if state_dim == 14:
             ## 먼저 realsense수 체크
@@ -75,7 +82,7 @@ def set_ur5(num_cameras, state_dim, reset_joints):
             env.step(jnt)
     else:
         it = 1 # right robot
-        reset_joints = reset_joints
+        reset_joints = np.deg2rad(reset_joints)
         curr_joints = env.get_obs()["joint_positions"]
         if reset_joints.shape == curr_joints.shape:
             max_delta = (np.abs(curr_joints - reset_joints)).max()
@@ -290,10 +297,10 @@ def eval_bc(config, ckpt_name, scan_cam, save_episode=True):
     for rollout_id in range(num_rollouts):
         rollout_id += 0
         ### set task
-        if 'sim_transfer_cube' in task_name:
-            BOX_POSE[0] = sample_box_pose() # used in sim reset
-        elif 'sim_insertion' in task_name:
-            BOX_POSE[0] = np.concatenate(sample_insertion_pose()) # used in sim reset
+        # if 'sim_transfer_cube' in task_name:
+        #     BOX_POSE[0] = sample_box_pose() # used in sim reset
+        # elif 'sim_insertion' in task_name:
+        #     BOX_POSE[0] = np.concatenate(sample_insertion_pose()) # used in sim reset
 
         # ts = env.reset()
 
